@@ -1,3 +1,4 @@
+import os
 import sys
 from pathlib import Path
 from contextlib import asynccontextmanager
@@ -5,10 +6,13 @@ from contextlib import asynccontextmanager
 # Ensure backend dir is on path for imports
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 
 from config import HOST, PORT
+
+SCHEDULER_API_KEY = os.environ.get("SCHEDULER_API_KEY")
 from services.db_service import init_db
 from services.reminder_service import reminder_service
 from routers.schedule import router as schedule_router
@@ -61,6 +65,19 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+@app.middleware("http")
+async def api_key_auth(request: Request, call_next):
+    """Optional API key authentication. Skipped if SCHEDULER_API_KEY is not set."""
+    if SCHEDULER_API_KEY:
+        # Skip auth for health check and WebSocket
+        if request.url.path not in ("/api/health",) and not request.url.path.startswith("/ws"):
+            key = request.headers.get("X-API-Key") or request.query_params.get("api_key")
+            if key != SCHEDULER_API_KEY:
+                return JSONResponse(status_code=401, content={"error": "Invalid or missing API key"})
+    return await call_next(request)
+
 
 app.include_router(schedule_router)
 app.include_router(voice_router)
