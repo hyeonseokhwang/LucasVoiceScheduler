@@ -103,7 +103,54 @@ app.include_router(dashboard_router)
 
 @app.get("/api/health")
 async def health():
-    return {"status": "ok", "service": "scheduler"}
+    """Enhanced health check: DB, TTS, Ollama, WebSocket status."""
+    import httpx
+    from services.db_service import fetch_one
+    from services.notification import notification_manager
+
+    checks = {}
+
+    # DB check
+    try:
+        result = await fetch_one("SELECT 1 as ok")
+        checks["db"] = {"status": "ok"} if result else {"status": "error", "detail": "query failed"}
+    except Exception as e:
+        checks["db"] = {"status": "error", "detail": str(e)}
+
+    # TTS (edge-tts)
+    try:
+        import edge_tts  # noqa: F401
+        checks["tts"] = {"status": "ok", "engine": "edge-tts"}
+    except ImportError:
+        checks["tts"] = {"status": "unavailable", "detail": "edge-tts not installed"}
+
+    # Ollama
+    try:
+        async with httpx.AsyncClient(timeout=3.0) as client:
+            resp = await client.get("http://localhost:11434/api/tags")
+            if resp.status_code == 200:
+                models = [m["name"] for m in resp.json().get("models", [])[:5]]
+                checks["ollama"] = {"status": "ok", "models": models}
+            else:
+                checks["ollama"] = {"status": "error", "detail": f"HTTP {resp.status_code}"}
+    except Exception:
+        checks["ollama"] = {"status": "unavailable", "detail": "not running"}
+
+    # WebSocket connections
+    ws_ch = notification_manager.get_channel("websocket")
+    ws_count = len(ws_ch._connections) if ws_ch and hasattr(ws_ch, "_connections") else 0
+    checks["websocket"] = {"status": "ok", "connections": ws_count}
+
+    # Notification channels
+    checks["notifications"] = {"channels": notification_manager.channels}
+
+    all_ok = all(c.get("status") == "ok" for c in checks.values() if isinstance(c, dict) and "status" in c)
+
+    return {
+        "status": "ok" if all_ok else "degraded",
+        "service": "scheduler",
+        "checks": checks,
+    }
 
 
 if __name__ == "__main__":
