@@ -23,6 +23,7 @@ from routers.schedule import router as schedule_router
 from routers.voice import router as voice_router
 from routers.challenge import router as challenge_router
 from routers.briefing import router as briefing_router
+from routers.stats import router as stats_router
 
 
 async def _prewarm_ollama():
@@ -89,53 +90,12 @@ app.include_router(schedule_router)
 app.include_router(voice_router)
 app.include_router(challenge_router)
 app.include_router(briefing_router)
+app.include_router(stats_router)
 
 
 @app.get("/api/health")
 async def health():
     return {"status": "ok", "service": "scheduler"}
-
-
-@app.get("/api/stats/summary")
-async def stats_summary():
-    """Dashboard summary stats for Mobile Commander integration."""
-    from datetime import datetime
-    from services.db_service import fetch_one, fetch_all
-
-    today = datetime.now().strftime("%Y-%m-%d")
-
-    total_schedules = (await fetch_one(
-        "SELECT COUNT(*) as cnt FROM schedules WHERE status != 'cancelled'"
-    ))["cnt"]
-
-    today_schedules = (await fetch_one(
-        "SELECT COUNT(*) as cnt FROM schedules WHERE status = 'active' AND start_at LIKE ?",
-        (f"{today}%",),
-    ))["cnt"]
-
-    active_challenges = (await fetch_one(
-        "SELECT COUNT(*) as cnt FROM challenges WHERE status = 'active'"
-    ))["cnt"]
-
-    # Count completed milestones across all active challenges
-    challenges = await fetch_all("SELECT milestones FROM challenges WHERE status = 'active'")
-    import json
-    completed_milestones = 0
-    total_milestones = 0
-    for ch in challenges:
-        if ch["milestones"]:
-            ms_list = json.loads(ch["milestones"]) if isinstance(ch["milestones"], str) else ch["milestones"]
-            total_milestones += len(ms_list)
-            completed_milestones += sum(1 for m in ms_list if m.get("status") == "completed")
-
-    return {
-        "total_schedules": total_schedules,
-        "today_schedules": today_schedules,
-        "active_challenges": active_challenges,
-        "completed_milestones": completed_milestones,
-        "total_milestones": total_milestones,
-        "date": today,
-    }
 
 
 if __name__ == "__main__":
