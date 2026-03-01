@@ -1,0 +1,27 @@
+version: "3.8"
+
+services:
+  scheduler:
+    build: .
+    container_name: lucas-scheduler
+    ports:
+      - "7778:7778"
+    volumes:
+      - scheduler-data:/app/db
+      - tts-cache:/app/tts_cache
+    environment:
+      - SCHEDULER_API_KEY=${SCHEDULER_API_KEY:-}
+      - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN:-}
+      - TELEGRAM_CHAT_ID=${TELEGRAM_CHAT_ID:-}
+      - SCHEDULER_WEBHOOK_URLS=${SCHEDULER_WEBHOOK_URLS:-}
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:7778/api/health')"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+volumes:
+  scheduler-data:
+  tts-cache:
