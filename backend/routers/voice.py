@@ -213,6 +213,119 @@ async def voice_chat_stream(body: VoiceChatRequest):
     return StreamingResponse(generate(), media_type="text/event-stream")
 
 
+class VoiceCommandRequest(BaseModel):
+    text: str
+
+
+@router.post("/command")
+async def voice_command(body: VoiceCommandRequest):
+    """Process a text command to perform schedule CRUD operations.
+
+    Supports commands like:
+      '내일 회의 추가해줘'      → CREATE
+      '오늘 일정 보여줘'        → LIST
+      '3번 일정 삭제해줘'       → DELETE
+      '5번 일정 완료'           → COMPLETE
+      '이번주 일정'             → LIST (week)
+    """
+    text = body.text.strip()
+    if not text:
+        return {"action": "NONE", "response": "명령이 비어있습니다."}
+
+    # Detect intent
+    action, result = await _process_command(text)
+    return {"action": action, **result}
+
+
+async def _process_command(text: str) -> tuple[str, dict]:
+    """Parse and execute a voice command."""
+    import re
+
+    # DELETE pattern: "N번 일정 삭제"
+    m = re.search(r'(\d+)\s*번?\s*일정?\s*(삭제|취소|제거)', text)
+    if m:
+        sid = int(m.group(1))
+        ok = await schedule_service.delete_schedule(sid)
+        if ok:
+            return "DELETE", {"response": f"{sid}번 일정을 삭제했습니다.", "schedule_id": sid}
+        return "DELETE", {"response": f"{sid}번 일정을 찾을 수 없습니다.", "error": True}
+
+    # COMPLETE pattern: "N번 일정 완료"
+    m = re.search(r'(\d+)\s*번?\s*일정?\s*(완료|끝|마감)', text)
+    if m:
+        sid = int(m.group(1))
+        result = await schedule_service.complete_schedule(sid)
+        if result:
+            return "COMPLETE", {"response": f"'{result['title']}' 일정을 완료했습니다.", "schedule": result}
+        return "COMPLETE", {"response": f"{sid}번 일정을 찾을 수 없습니다.", "error": True}
+
+    # LIST patterns
+    if any(k in text for k in ("일정 보여", "일정 알려", "뭐 있", "스케줄", "일정 목록")):
+        if any(k in text for k in ("이번주", "이번 주", "금주")):
+            schedules = await schedule_service.get_upcoming(hours=168)
+            label = "이번 주"
+        elif any(k in text for k in ("내일",)):
+            tomorrow = (datetime.now() + timedelta(days=1)).strftime("%Y-%m-%d")
+            schedules = await schedule_service.list_schedules(
+                from_date=f"{tomorrow}T00:00:00", to_date=f"{tomorrow}T23:59:59"
+            )
+            label = "내일"
+        else:
+            today = datetime.now().strftime("%Y-%m-%d")
+            schedules = await schedule_service.list_schedules(
+                from_date=f"{today}T00:00:00", to_date=f"{today}T23:59:59"
+            )
+            label = "오늘"
+
+        if not schedules:
+            return "LIST", {"response": f"{label} 일정이 없습니다.", "schedules": []}
+
+        items = []
+        for s in schedules[:10]:
+            try:
+                dt = datetime.strptime(s["start_at"][:16], "%Y-%m-%dT%H:%M")
+                t = dt.strftime("%H:%M")
+            except ValueError:
+                t = ""
+            items.append(f"{t} {s['title']}")
+
+        return "LIST", {
+            "response": f"{label} 일정 {len(schedules)}건:\n" + "\n".join(items),
+            "schedules": schedules,
+        }
+
+    # CREATE pattern: anything that mentions adding/creating
+    if any(k in text for k in ("추가", "생성", "만들", "등록", "넣어", "잡아")):
+        from services.natural_language_service import parse_natural_language
+        from services.conflict_service import detect_conflicts
+
+        result = await parse_natural_language(text)
+        schedule_data = result["schedule"]
+
+        conflicts = await detect_conflicts(
+            schedule_data.get("start_at", ""),
+            schedule_data.get("end_at"),
+        )
+
+        if result["confidence"] >= 0.5:
+            created = await schedule_service.create_schedule(schedule_data)
+            conflict_msg = f" (주의: {len(conflicts)}건 겹침)" if conflicts else ""
+            return "CREATE", {
+                "response": f"'{created['title']}' 일정을 추가했습니다.{conflict_msg}",
+                "schedule": created,
+                "conflicts": conflicts,
+            }
+        else:
+            return "CREATE", {
+                "response": "일정을 정확히 파악하지 못했습니다. 다시 말씀해주세요.",
+                "parsed": schedule_data,
+                "confidence": result["confidence"],
+            }
+
+    # Fallback: try natural language parse
+    return "NONE", {"response": "명령을 이해하지 못했습니다. '일정 추가', '오늘 일정', '3번 삭제' 등으로 말해주세요."}
+
+
 @router.post("/transcribe")
 async def voice_transcribe(audio: UploadFile = File(...)):
     """
@@ -272,6 +385,27 @@ class TTSRequest(BaseModel):
     text: str
     voice: str = "ko-KR-SunHiNeural"
     rate: str = "+10%"
+
+
+# Available Edge TTS voices
+TTS_VOICES = [
+    # Korean
+    {"id": "ko-KR-SunHiNeural", "name": "선희 (여성)", "lang": "ko", "gender": "female"},
+    {"id": "ko-KR-InJoonNeural", "name": "인준 (남성)", "lang": "ko", "gender": "male"},
+    {"id": "ko-KR-BongJinNeural", "name": "봉진 (남성)", "lang": "ko", "gender": "male"},
+    {"id": "ko-KR-GookMinNeural", "name": "국민 (남성)", "lang": "ko", "gender": "male"},
+    {"id": "ko-KR-JiMinNeural", "name": "지민 (여성)", "lang": "ko", "gender": "female"},
+    {"id": "ko-KR-SeoHyeonNeural", "name": "서현 (여성)", "lang": "ko", "gender": "female"},
+    {"id": "ko-KR-SoonBokNeural", "name": "순복 (여성)", "lang": "ko", "gender": "female"},
+    {"id": "ko-KR-YuJinNeural", "name": "유진 (여성)", "lang": "ko", "gender": "female"},
+    # English
+    {"id": "en-US-GuyNeural", "name": "Guy (Male)", "lang": "en", "gender": "male"},
+    {"id": "en-US-JennyNeural", "name": "Jenny (Female)", "lang": "en", "gender": "female"},
+    {"id": "en-US-AriaNeural", "name": "Aria (Female)", "lang": "en", "gender": "female"},
+    # Japanese
+    {"id": "ja-JP-KeitaNeural", "name": "Keita (Male)", "lang": "ja", "gender": "male"},
+    {"id": "ja-JP-NanamiNeural", "name": "Nanami (Female)", "lang": "ja", "gender": "female"},
+]
 
 
 def _sanitize_for_tts(text: str) -> str:
@@ -341,6 +475,30 @@ async def get_reminder_audio(schedule_id: int):
         media_type="audio/mpeg",
         headers={"Content-Disposition": f"inline; filename=reminder_{schedule_id}.mp3"},
     )
+
+
+@router.get("/voices")
+async def list_voices(lang: Optional[str] = Query(None)):
+    """Available Edge TTS voices. Filter by lang: ko, en, ja."""
+    if lang:
+        return [v for v in TTS_VOICES if v["lang"] == lang]
+    return TTS_VOICES
+
+
+class VoiceSettingRequest(BaseModel):
+    voice: str
+
+
+@router.put("/settings/voice")
+async def set_default_voice(body: VoiceSettingRequest):
+    """Set default TTS voice for reminders and briefings."""
+    from services.reminder_service import reminder_service
+    valid_ids = {v["id"] for v in TTS_VOICES}
+    if body.voice not in valid_ids:
+        from fastapi import HTTPException
+        raise HTTPException(400, f"Unknown voice: {body.voice}")
+    reminder_service.tts_voice = body.voice
+    return {"voice": body.voice, "message": "Default voice updated"}
 
 
 @router.get("/status")
