@@ -7,13 +7,22 @@ from services.db_service import fetch_all, fetch_one, execute
 
 async def list_challenges(status: Optional[str] = None):
     if status:
-        return await fetch_all(
+        rows = await fetch_all(
             "SELECT * FROM challenges WHERE status = ? ORDER BY deadline ASC",
             (status,),
         )
-    return await fetch_all(
-        "SELECT * FROM challenges WHERE status != 'cancelled' ORDER BY deadline ASC"
-    )
+    else:
+        rows = await fetch_all(
+            "SELECT * FROM challenges WHERE status != 'cancelled' ORDER BY deadline ASC"
+        )
+
+    # Enrich each challenge with parsed milestones and progress
+    for ch in rows:
+        if ch.get("milestones") and isinstance(ch["milestones"], str):
+            ch["milestones"] = json.loads(ch["milestones"])
+        ch["progress"] = _calc_progress(ch)
+
+    return rows
 
 
 async def get_challenge(challenge_id: int):
