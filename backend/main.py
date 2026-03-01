@@ -27,6 +27,7 @@ from routers.stats import router as stats_router
 from routers.natural import router as natural_router
 from routers.template import router as template_router
 from routers.dashboard import router as dashboard_router
+from routers.export import router as export_router
 
 
 async def _prewarm_ollama():
@@ -89,12 +90,13 @@ async def api_key_auth(request: Request, call_next):
     return await call_next(request)
 
 
+app.include_router(export_router)      # before schedule_router (path priority)
+app.include_router(natural_router)     # before schedule_router (path priority)
 app.include_router(schedule_router)
 app.include_router(voice_router)
 app.include_router(challenge_router)
 app.include_router(briefing_router)
 app.include_router(stats_router)
-app.include_router(natural_router)
 app.include_router(template_router)
 app.include_router(dashboard_router)
 
