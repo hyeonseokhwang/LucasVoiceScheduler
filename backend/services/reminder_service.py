@@ -8,6 +8,9 @@ from pathlib import Path
 from fastapi import WebSocket
 from config import REMINDER_CHECK_INTERVAL
 from services.schedule_service import get_due_reminders
+from services.notification import (
+    NotificationManager, WebSocketChannel, LogChannel, notification_manager,
+)
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -18,29 +21,28 @@ TTS_ENABLED = True
 
 class ReminderService:
     def __init__(self):
-        self._connections: list[WebSocket] = []
         self._task: asyncio.Task | None = None
         self._challenge_task: asyncio.Task | None = None
         self._notified_challenges: set[str] = set()
         self._notified_reminders: set[str] = set()  # prevent duplicate schedule reminders
+        self.tts_voice: str = TTS_VOICE  # configurable voice
+
+        # Set up notification channels
+        self._ws_channel = WebSocketChannel()
+        notification_manager.register(self._ws_channel)
+        notification_manager.register(LogChannel())
 
     async def connect(self, ws: WebSocket):
-        await ws.accept()
-        self._connections.append(ws)
+        """WebSocket connection (delegates to WebSocketChannel)."""
+        await self._ws_channel.connect(ws)
 
     def disconnect(self, ws: WebSocket):
-        if ws in self._connections:
-            self._connections.remove(ws)
+        """WebSocket disconnection (delegates to WebSocketChannel)."""
+        self._ws_channel.disconnect(ws)
 
     async def broadcast(self, message: dict):
-        dead = []
-        for ws in self._connections:
-            try:
-                await ws.send_json(message)
-            except Exception:
-                dead.append(ws)
-        for ws in dead:
-            self.disconnect(ws)
+        """Broadcast to all registered notification channels."""
+        await notification_manager.broadcast(message)
 
     async def _check_loop(self):
         while True:
@@ -89,7 +91,7 @@ class ReminderService:
 
             proc = await asyncio.create_subprocess_exec(
                 "python", "-m", "edge_tts",
-                "--voice", TTS_VOICE,
+                "--voice", self.tts_voice,
                 "--text", text,
                 "--write-media", str(output_path),
                 stdout=asyncio.subprocess.DEVNULL,
