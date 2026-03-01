@@ -4,6 +4,7 @@ import { CATEGORIES } from '../types'
 import { api } from '../lib/api'
 import { MiniCalendar } from './MiniCalendar'
 import { SearchResults } from './SearchResults'
+import { ChallengeCard } from './ChallengeCard'
 
 interface Props {
   year: number
@@ -15,6 +16,7 @@ interface Props {
   onSelectDate: (date: string) => void
   onSelectSchedule: (s: Schedule) => void
   searchInputRef: React.RefObject<HTMLInputElement | null>
+  addToast: (type: 'success' | 'error' | 'info', message: string) => void
 }
 
 export function Sidebar({
@@ -27,6 +29,7 @@ export function Sidebar({
   onSelectDate,
   onSelectSchedule,
   searchInputRef,
+  addToast,
 }: Props) {
   const [searchQuery, setSearchQuery] = useState('')
   const [searchResults, setSearchResults] = useState<Schedule[]>([])
@@ -140,6 +143,11 @@ export function Sidebar({
             )
           })}
         </div>
+      </div>
+
+      {/* Challenge Card */}
+      <div className="bg-slate-800/50 rounded-xl border border-slate-700/50 p-3">
+        <ChallengeCard addToast={addToast} />
       </div>
 
       {/* Keyboard shortcuts hint */}

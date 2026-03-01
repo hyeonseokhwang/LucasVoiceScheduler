@@ -34,6 +34,44 @@ export interface ScheduleFormData {
   parent_id?: number
 }
 
+export interface Milestone {
+  title: string
+  due_date: string
+  status: 'pending' | 'completed'
+}
+
+export interface Earning {
+  id: number
+  challenge_id: number
+  amount: number
+  source?: string | null
+  date: string
+  note?: string | null
+  created_at: string
+}
+
+export interface ChallengeProgress {
+  percentage: number
+  d_day: number | null
+  milestones_total: number
+  milestones_done: number
+  remaining: number
+}
+
+export interface Challenge {
+  id: number
+  title: string
+  description?: string | null
+  target_amount: number
+  current_amount: number
+  deadline: string
+  status: 'active' | 'completed' | 'failed' | 'cancelled'
+  milestones?: Milestone[] | null
+  earnings?: Earning[]
+  progress?: ChallengeProgress
+  created_at: string
+}
+
 export type ViewMode = 'month' | 'week' | 'day'
 
 export const CATEGORIES: Record<string, { label: string; color: string; bg: string }> = {

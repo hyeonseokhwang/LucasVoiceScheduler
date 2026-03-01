@@ -13,6 +13,7 @@ from services.db_service import init_db
 from services.reminder_service import reminder_service
 from routers.schedule import router as schedule_router
 from routers.voice import router as voice_router
+from routers.challenge import router as challenge_router
 
 
 async def _prewarm_ollama():
@@ -58,6 +59,7 @@ app.add_middleware(
 
 app.include_router(schedule_router)
 app.include_router(voice_router)
+app.include_router(challenge_router)
 
 
 @app.get("/api/health")

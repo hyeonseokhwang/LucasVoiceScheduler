@@ -1,4 +1,4 @@
-import type { Schedule, ScheduleFormData } from '../types'
+import type { Schedule, ScheduleFormData, Challenge, Earning, ChallengeProgress } from '../types'
 
 const BASE = '/api/schedules'
 
@@ -85,6 +85,35 @@ export const api = {
 
   voiceContext(date: string) {
     return request<{ schedules: Schedule[]; summary: string }>(`/api/voice/context?date=${date}`)
+  },
+
+  // Challenge API
+  challengeList(status?: string) {
+    const qs = status ? `?status=${status}` : ''
+    return request<Challenge[]>(`/api/challenges${qs}`)
+  },
+
+  challengeGet(id: number) {
+    return request<Challenge>(`/api/challenges/${id}`)
+  },
+
+  challengeCreate(data: { title: string; description?: string; target_amount: number; deadline: string; milestones?: object[] }) {
+    return request<Challenge>('/api/challenges', { method: 'POST', body: JSON.stringify(data) })
+  },
+
+  challengeAddEarning(id: number, data: { amount: number; source?: string; date?: string; note?: string }) {
+    return request<Earning>(`/api/challenges/${id}/earning`, { method: 'POST', body: JSON.stringify(data) })
+  },
+
+  challengeProgress(id: number) {
+    return request<ChallengeProgress>(`/api/challenges/${id}/progress`)
+  },
+
+  challengeUpdateMilestone(challengeId: number, milestoneIndex: number, status: string) {
+    return request<Challenge>(`/api/challenges/${challengeId}/milestone/${milestoneIndex}`, {
+      method: 'PUT',
+      body: JSON.stringify({ status }),
+    })
   },
 
   async voiceTranscribe(audioBlob: Blob): Promise<{ text: string; duration: number; processing_time: number; error?: string }> {

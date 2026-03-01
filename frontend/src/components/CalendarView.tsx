@@ -222,22 +222,28 @@ export function CalendarView({
     )
   }
 
-  // ── WEEK VIEW ──
+  // ── WEEK VIEW (Timeline) ──
   if (view === 'week') {
     const weekDays = getWeekDays(selectedDate)
+    const HOUR_HEIGHT = 56 // px per hour slot
+    const START_HOUR = 6
+    const END_HOUR = 23
+    const visibleHours = HOURS.filter(h => h >= START_HOUR && h <= END_HOUR)
+
     return (
-      <div className="overflow-x-auto">
+      <div className="overflow-x-auto overflow-y-auto max-h-[calc(100vh-120px)]">
         {/* Header */}
         <div className="grid grid-cols-[60px_repeat(7,1fr)] gap-px sticky top-0 bg-slate-900 z-10">
           <div />
           {weekDays.map((date, i) => {
             const d = new Date(date)
             const isToday = date === today
+            const dayCount = (schedulesByDate[date] || []).length
             return (
               <button
                 key={date}
                 onClick={() => onSelectDate(date)}
-                className={`text-center py-2 ${date === selectedDate ? 'bg-slate-700' : ''}`}
+                className={`text-center py-2 ${date === selectedDate ? 'bg-slate-700/50' : ''}`}
               >
                 <div className="text-xs text-slate-500">{DAY_NAMES[i]}</div>
                 <div className={`text-sm font-medium w-7 h-7 mx-auto flex items-center justify-center rounded-full ${
@@ -245,69 +251,125 @@ export function CalendarView({
                 }`}>
                   {d.getDate()}
                 </div>
+                {dayCount > 0 && <div className="text-[10px] text-slate-500 mt-0.5">{dayCount}건</div>}
               </button>
             )
           })}
         </div>
-        {/* Time grid */}
-        <div className="grid grid-cols-[60px_repeat(7,1fr)] gap-px">
-          {HOURS.map((hour) => (
-            <div key={hour} className="contents">
-              <div className="text-xs text-slate-500 text-right pr-2 py-3 h-14">
-                {String(hour).padStart(2, '0')}:00
-              </div>
-              {weekDays.map((date) => {
-                const daySchedules = (schedulesByDate[date] || []).filter((s) => {
-                  if (s.all_day) return false
-                  const h = new Date(s.start_at).getHours()
-                  return h === hour
-                })
-                const laid = layoutEvents(daySchedules)
-                const targetId = `week-${date}-${hour}`
-                const isDragOver = dragOverTarget === targetId
 
+        {/* All-day events row */}
+        {(() => {
+          const hasAllDay = weekDays.some(date => (schedulesByDate[date] || []).some(s => s.all_day))
+          if (!hasAllDay) return null
+          return (
+            <div className="grid grid-cols-[60px_repeat(7,1fr)] gap-px border-b border-slate-700/50">
+              <div className="text-[10px] text-slate-500 text-right pr-2 py-1">종일</div>
+              {weekDays.map(date => {
+                const allDay = (schedulesByDate[date] || []).filter(s => s.all_day)
                 return (
-                  <div
-                    key={targetId}
-                    onClick={(e) => {
-                      if ((e.target as HTMLElement).closest('[data-schedule]')) return
-                      onTimeSlotClick?.(date, hour)
-                    }}
-                    onDragOver={(e) => onDragOver?.(e, targetId)}
-                    onDragLeave={() => onDragLeave?.()}
-                    onDrop={(e) => onDrop?.(e, date, hour)}
-                    className={`border-t border-slate-700/50 h-14 relative hover:bg-slate-800/60 transition-colors cursor-pointer ${
-                      isDragOver ? 'ring-2 ring-blue-500/50 bg-blue-500/10' : ''
-                    }`}
-                  >
-                    {laid.map(({ schedule: s, column, totalColumns }) => {
+                  <div key={`allday-${date}`} className="py-1 px-0.5 space-y-0.5">
+                    {allDay.map((s, i) => {
                       const cat = CATEGORIES[s.category] || CATEGORIES.general
-                      const isDraggingThis = dragging?.id === s.id
-                      const width = `${(1 / totalColumns) * 100}%`
-                      const left = `${(column / totalColumns) * 100}%`
-
                       return (
-                        <div
-                          key={`${s.id}-${column}`}
-                          data-schedule
-                          draggable={!s._is_occurrence}
-                          onDragStart={(e) => { e.stopPropagation(); onDragStart?.(e, s) }}
-                          onDragEnd={() => onDragEnd?.()}
-                          onClick={(e) => { e.stopPropagation(); onSelectSchedule(s) }}
-                          className={`absolute top-0 bottom-0 mx-0.5 text-[10px] sm:text-xs truncate px-1 py-0.5 rounded ${cat.bg} ${cat.color} cursor-pointer hover:brightness-125 ${
-                            isDraggingThis ? 'opacity-50' : ''
-                          }`}
-                          style={{ width, left }}
-                        >
-                          {s.title}
-                        </div>
+                        <div key={`${s.id}-${i}`} onClick={() => onSelectSchedule(s)}
+                          className={`text-[10px] truncate px-1 py-0.5 rounded ${cat.bg} ${cat.color} cursor-pointer hover:brightness-125`}
+                        >{s.title}</div>
                       )
                     })}
                   </div>
                 )
               })}
             </div>
-          ))}
+          )
+        })()}
+
+        {/* Time grid with spanning events */}
+        <div className="grid grid-cols-[60px_repeat(7,1fr)] gap-px">
+          {/* Time labels column + day columns */}
+          <div className="relative">
+            {visibleHours.map(hour => (
+              <div key={hour} className="text-xs text-slate-500 text-right pr-2 flex items-start justify-end" style={{ height: HOUR_HEIGHT }}>
+                <span className="-mt-2">{String(hour).padStart(2, '0')}:00</span>
+              </div>
+            ))}
+          </div>
+
+          {weekDays.map(date => {
+            const daySchedules = (schedulesByDate[date] || []).filter(s => !s.all_day)
+            const isToday = date === today
+
+            return (
+              <div key={`col-${date}`} className={`relative ${isToday ? 'bg-blue-900/10' : ''}`}
+                style={{ height: visibleHours.length * HOUR_HEIGHT }}
+              >
+                {/* Hour grid lines */}
+                {visibleHours.map(hour => (
+                  <div key={hour}
+                    onClick={() => onTimeSlotClick?.(date, hour)}
+                    onDragOver={(e) => onDragOver?.(e, `week-${date}-${hour}`)}
+                    onDragLeave={() => onDragLeave?.()}
+                    onDrop={(e) => onDrop?.(e, date, hour)}
+                    className={`absolute left-0 right-0 border-t border-slate-700/30 hover:bg-slate-800/40 transition-colors cursor-pointer ${
+                      dragOverTarget === `week-${date}-${hour}` ? 'bg-blue-500/10' : ''
+                    }`}
+                    style={{ top: (hour - START_HOUR) * HOUR_HEIGHT, height: HOUR_HEIGHT }}
+                  />
+                ))}
+
+                {/* Now indicator */}
+                {isToday && (() => {
+                  const now = new Date()
+                  const nowMinutes = now.getHours() * 60 + now.getMinutes()
+                  const top = ((nowMinutes / 60) - START_HOUR) * HOUR_HEIGHT
+                  if (top < 0 || top > visibleHours.length * HOUR_HEIGHT) return null
+                  return <div className="absolute left-0 right-0 border-t-2 border-red-500 z-10" style={{ top }} >
+                    <div className="w-2 h-2 bg-red-500 rounded-full -mt-1 -ml-1" />
+                  </div>
+                })()}
+
+                {/* Spanning event blocks */}
+                {daySchedules.map((s, idx) => {
+                  const cat = CATEGORIES[s.category] || CATEGORIES.general
+                  const startDt = new Date(s.start_at)
+                  const startMin = startDt.getHours() * 60 + startDt.getMinutes()
+                  const endDt = s.end_at ? new Date(s.end_at) : new Date(startDt.getTime() + 3600000)
+                  const endMin = endDt.getHours() * 60 + endDt.getMinutes()
+                  const duration = Math.max(endMin - startMin, 30)
+
+                  const top = ((startMin / 60) - START_HOUR) * HOUR_HEIGHT
+                  const height = (duration / 60) * HOUR_HEIGHT
+
+                  if (top + height < 0) return null
+
+                  return (
+                    <div
+                      key={`${s.id}-${idx}`}
+                      data-schedule
+                      onClick={(e) => { e.stopPropagation(); onSelectSchedule(s) }}
+                      className={`absolute left-0.5 right-0.5 rounded px-1.5 py-0.5 overflow-hidden cursor-pointer hover:brightness-125 border-l-2 z-[5] ${cat.bg} ${cat.color}`}
+                      style={{
+                        top: Math.max(top, 0),
+                        height: Math.max(height - 1, 20),
+                        borderLeftColor: cat.color.includes('blue') ? '#3b82f6' :
+                          cat.color.includes('orange') ? '#f97316' :
+                          cat.color.includes('green') ? '#22c55e' :
+                          cat.color.includes('purple') ? '#a855f7' : '#3b82f6',
+                      }}
+                    >
+                      <div className="text-[10px] sm:text-xs font-medium truncate">{s.title}</div>
+                      {height > 30 && (
+                        <div className="text-[9px] sm:text-[10px] opacity-70">
+                          {startDt.toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit' })}
+                          {' - '}
+                          {endDt.toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit' })}
+                        </div>
+                      )}
+                    </div>
+                  )
+                })}
+              </div>
+            )
+          })}
         </div>
       </div>
     )

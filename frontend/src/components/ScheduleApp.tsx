@@ -14,6 +14,8 @@ import { Sidebar } from './Sidebar'
 import { Toast, type ToastItem } from './Toast'
 import { VoiceAssistant } from './VoiceAssistant'
 import { QuickInput } from './QuickInput'
+import { ChallengePage } from './ChallengePage'
+import { StatsView } from './StatsView'
 
 const MONTH_NAMES = ['1월', '2월', '3월', '4월', '5월', '6월', '7월', '8월', '9월', '10월', '11월', '12월']
 
@@ -25,6 +27,7 @@ export function ScheduleApp() {
   const [view, setView] = useState<ViewMode>('month')
   const [showList, setShowList] = useState(false)
   const [sidebarOpen, setSidebarOpen] = useState(true)
+  const [page, setPage] = useState<'calendar' | 'challenge' | 'stats'>('calendar')
 
   const [schedules, setSchedules] = useState<Schedule[]>([])
   const [loading, setLoading] = useState(false)
@@ -224,35 +227,69 @@ export function ScheduleApp() {
               <QuickInput onScheduleCreated={fetchSchedules} addToast={addToast} />
             </div>
 
-            {/* Right: view switcher + actions */}
+            {/* Right: page switcher + view switcher + actions */}
             <div className="flex items-center gap-2">
+              {/* Page tabs */}
               <div className="flex bg-slate-800 rounded-lg p-0.5">
-                {views.map(({ mode, label }) => (
-                  <button
-                    key={mode}
-                    onClick={() => { setView(mode); setShowList(false) }}
-                    className={`px-3 py-1.5 rounded-md text-sm font-medium transition-colors min-h-[36px] ${
-                      view === mode && !showList ? 'bg-blue-600 text-white' : 'text-slate-400 hover:text-white'
-                    }`}
-                  >
-                    {label}
-                  </button>
-                ))}
                 <button
-                  onClick={() => setShowList(!showList)}
+                  onClick={() => setPage('calendar')}
                   className={`px-3 py-1.5 rounded-md text-sm font-medium transition-colors min-h-[36px] ${
-                    showList ? 'bg-blue-600 text-white' : 'text-slate-400 hover:text-white'
+                    page === 'calendar' ? 'bg-blue-600 text-white' : 'text-slate-400 hover:text-white'
                   }`}
                 >
-                  목록
+                  일정
+                </button>
+                <button
+                  onClick={() => setPage('challenge')}
+                  className={`px-3 py-1.5 rounded-md text-sm font-medium transition-colors min-h-[36px] ${
+                    page === 'challenge' ? 'bg-amber-600 text-white' : 'text-slate-400 hover:text-white'
+                  }`}
+                >
+                  챌린지
+                </button>
+                <button
+                  onClick={() => setPage('stats')}
+                  className={`px-3 py-1.5 rounded-md text-sm font-medium transition-colors min-h-[36px] ${
+                    page === 'stats' ? 'bg-purple-600 text-white' : 'text-slate-400 hover:text-white'
+                  }`}
+                >
+                  통계
                 </button>
               </div>
-              <button
-                onClick={handleCreate}
-                className="px-4 py-2 bg-blue-600 hover:bg-blue-500 rounded-lg font-medium text-sm transition-colors min-h-[44px]"
-              >
-                + 새 일정
-              </button>
+
+              {/* Calendar view switcher (only on calendar page) */}
+              {page === 'calendar' && (
+                <div className="flex bg-slate-800 rounded-lg p-0.5">
+                  {views.map(({ mode, label }) => (
+                    <button
+                      key={mode}
+                      onClick={() => { setView(mode); setShowList(false) }}
+                      className={`px-3 py-1.5 rounded-md text-sm font-medium transition-colors min-h-[36px] ${
+                        view === mode && !showList ? 'bg-blue-600 text-white' : 'text-slate-400 hover:text-white'
+                      }`}
+                    >
+                      {label}
+                    </button>
+                  ))}
+                  <button
+                    onClick={() => setShowList(!showList)}
+                    className={`px-3 py-1.5 rounded-md text-sm font-medium transition-colors min-h-[36px] ${
+                      showList ? 'bg-blue-600 text-white' : 'text-slate-400 hover:text-white'
+                    }`}
+                  >
+                    목록
+                  </button>
+                </div>
+              )}
+
+              {page === 'calendar' && (
+                <button
+                  onClick={handleCreate}
+                  className="px-4 py-2 bg-blue-600 hover:bg-blue-500 rounded-lg font-medium text-sm transition-colors min-h-[44px]"
+                >
+                  + 새 일정
+                </button>
+              )}
             </div>
           </div>
         </div>
@@ -272,55 +309,68 @@ export function ScheduleApp() {
             onSelectDate={handleSelectDate}
             onSelectSchedule={handleSelectSchedule}
             searchInputRef={searchInputRef}
+            addToast={addToast}
           />
         </div>
 
         {/* Main content */}
         <main className="flex-1 min-w-0 px-4 py-4">
-          {loading && (
-            <div className="flex items-center justify-center py-12">
-              <svg className="animate-spin h-8 w-8 text-blue-500" viewBox="0 0 24 24">
-                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" />
-                <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
-              </svg>
-            </div>
+          {page === 'challenge' && (
+            <ChallengePage addToast={addToast} />
           )}
 
-          {!loading && showList ? (
-            <ScheduleList schedules={filteredSchedules} onSelect={handleSelectSchedule} />
-          ) : !loading ? (
-            <CalendarView
-              year={year}
-              month={month}
-              selectedDate={selectedDate}
-              schedules={filteredSchedules}
-              view={view}
-              onSelectDate={handleSelectDate}
-              onSelectSchedule={handleSelectSchedule}
-              onTimeSlotClick={handleTimeSlotClick}
-              dragging={dragging}
-              dragOverTarget={dragOverTarget}
-              onDragStart={handleDragStart}
-              onDragOver={handleDragOver}
-              onDragLeave={handleDragLeave}
-              onDrop={handleDrop}
-              onDragEnd={handleDragEnd}
-            />
-          ) : null}
+          {page === 'stats' && (
+            <StatsView />
+          )}
 
-          {/* Empty state */}
-          {!loading && filteredSchedules.length === 0 && !showList && (
-            <div className="text-center py-16">
-              <div className="text-5xl mb-4 opacity-30">📅</div>
-              <p className="text-slate-500 text-lg mb-2">이번 달 일정이 없습니다</p>
-              <p className="text-slate-600 text-sm mb-4">새 일정을 만들어보세요</p>
-              <button
-                onClick={handleCreate}
-                className="px-4 py-2 bg-blue-600 hover:bg-blue-500 rounded-lg text-sm font-medium transition-colors"
-              >
-                + 새 일정 만들기
-              </button>
-            </div>
+          {page === 'calendar' && (
+            <>
+              {loading && (
+                <div className="flex items-center justify-center py-12">
+                  <svg className="animate-spin h-8 w-8 text-blue-500" viewBox="0 0 24 24">
+                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" />
+                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+                  </svg>
+                </div>
+              )}
+
+              {!loading && showList ? (
+                <ScheduleList schedules={filteredSchedules} onSelect={handleSelectSchedule} />
+              ) : !loading ? (
+                <CalendarView
+                  year={year}
+                  month={month}
+                  selectedDate={selectedDate}
+                  schedules={filteredSchedules}
+                  view={view}
+                  onSelectDate={handleSelectDate}
+                  onSelectSchedule={handleSelectSchedule}
+                  onTimeSlotClick={handleTimeSlotClick}
+                  dragging={dragging}
+                  dragOverTarget={dragOverTarget}
+                  onDragStart={handleDragStart}
+                  onDragOver={handleDragOver}
+                  onDragLeave={handleDragLeave}
+                  onDrop={handleDrop}
+                  onDragEnd={handleDragEnd}
+                />
+              ) : null}
+
+              {/* Empty state */}
+              {!loading && filteredSchedules.length === 0 && !showList && (
+                <div className="text-center py-16">
+                  <div className="text-5xl mb-4 opacity-30">📅</div>
+                  <p className="text-slate-500 text-lg mb-2">이번 달 일정이 없습니다</p>
+                  <p className="text-slate-600 text-sm mb-4">새 일정을 만들어보세요</p>
+                  <button
+                    onClick={handleCreate}
+                    className="px-4 py-2 bg-blue-600 hover:bg-blue-500 rounded-lg text-sm font-medium transition-colors"
+                  >
+                    + 새 일정 만들기
+                  </button>
+                </div>
+              )}
+            </>
           )}
         </main>
       </div>

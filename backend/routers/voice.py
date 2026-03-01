@@ -15,11 +15,12 @@ from fastapi import APIRouter, Query, UploadFile, File
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
-from services import schedule_service
+from services import schedule_service, challenge_service
 from services.nlp_service import parse_korean_datetime
 from services.llm_service import parse_with_llm, generate_response, check_ollama_available
 from services.conversation_service import chat_with_context, stream_chat
 from services import whisper_service
+from services.challenge_nlp import parse_challenge_command
 
 router = APIRouter(prefix="/api/voice", tags=["voice"])
 
@@ -51,6 +52,7 @@ class VoiceChatRequest(BaseModel):
 async def voice_parse(body: VoiceParseRequest):
     """
     Parse natural language text into schedule data.
+    0. Check for challenge commands first
     1. Rule-based Korean parser (fast, free)
     2. If low confidence → Ollama LLM (local, free)
     3. Check for conflicts with existing schedules
@@ -59,6 +61,18 @@ async def voice_parse(body: VoiceParseRequest):
     text = body.text.strip()
     if not text:
         return {"error": "텍스트가 비어있습니다", "parsed": None, "confidence": 0}
+
+    # Step 0: Challenge command detection
+    challenge_cmd = parse_challenge_command(text)
+    if challenge_cmd:
+        result = await _handle_challenge_command(challenge_cmd)
+        return {
+            "parsed": None,
+            "confidence": 1.0,
+            "response": result["response"],
+            "conflicts": [],
+            "challenge_action": result,
+        }
 
     now = datetime.now()
 
@@ -113,6 +127,19 @@ async def voice_chat(body: VoiceChatRequest):
     text = body.text.strip()
     if not text:
         return {"response": "뭐라고 했어? 다시 말해줘.", "action": "ASK", "schedule_data": None}
+
+    # Challenge command detection
+    challenge_cmd = parse_challenge_command(text)
+    if challenge_cmd:
+        result = await _handle_challenge_command(challenge_cmd)
+        return {
+            "response": result["response"],
+            "action": "CHALLENGE",
+            "schedule_data": None,
+            "confidence": 1.0,
+            "conflicts": [],
+            "challenge_action": result,
+        }
 
     now = datetime.now()
 
@@ -319,6 +346,117 @@ async def voice_status():
             "stt_browser": True,
         },
     }
+
+
+async def _handle_challenge_command(cmd: dict) -> dict:
+    """챌린지 관련 음성 명령을 처리합니다."""
+    command = cmd["command"]
+
+    if command == "STATUS":
+        challenges = await challenge_service.list_challenges("active")
+        if not challenges:
+            return {"command": "STATUS", "response": "진행 중인 챌린지가 없어."}
+
+        parts = []
+        for ch in challenges:
+            detail = await challenge_service.get_challenge(ch["id"])
+            progress = detail["progress"]
+            pct = progress["percentage"]
+            d_day = progress["d_day"]
+            current = detail["current_amount"]
+            target = detail["target_amount"]
+
+            d_str = f"D-{d_day}" if d_day > 0 else ("D-Day!" if d_day == 0 else f"D+{abs(d_day)}")
+
+            parts.append(
+                f"{detail['title']}: {current:,}원 달성, {pct}% 진행, {d_str}. "
+                f"마일스톤 {progress['milestones_done']}/{progress['milestones_total']}개 완료."
+            )
+
+            # Upcoming milestones
+            milestones = detail.get("milestones") or []
+            pending = [m for m in milestones if m.get("status") != "completed"]
+            if pending:
+                next_ms = pending[0]
+                parts.append(f"다음 마일스톤: {next_ms['title']} ({next_ms['due_date'][5:]})")
+
+        return {"command": "STATUS", "response": " ".join(parts), "challenges": challenges}
+
+    elif command == "ADD_EARNING":
+        amount = cmd["amount"]
+        source = cmd.get("source")
+        challenges = await challenge_service.list_challenges("active")
+        if not challenges:
+            return {"command": "ADD_EARNING", "response": "진행 중인 챌린지가 없어서 수익을 기록할 수 없어."}
+
+        # Add to first active challenge
+        ch = challenges[0]
+        earning = await challenge_service.add_earning(ch["id"], {
+            "amount": amount,
+            "source": source,
+        })
+
+        detail = await challenge_service.get_challenge(ch["id"])
+        pct = detail["progress"]["percentage"]
+        remaining = detail["progress"]["remaining"]
+
+        source_str = f" ({source})" if source else ""
+        response = f"{amount:,}원{source_str} 수익을 기록했어! 현재 {detail['current_amount']:,}원, {pct}% 달성."
+        if remaining > 0:
+            response += f" 목표까지 {remaining:,}원 남았어."
+        else:
+            response += " 목표를 달성했어!"
+
+        return {"command": "ADD_EARNING", "response": response, "earning": earning}
+
+    elif command == "COMPLETE_MILESTONE":
+        milestone_name = cmd.get("milestone_name", "")
+        challenges = await challenge_service.list_challenges("active")
+        if not challenges:
+            return {"command": "COMPLETE_MILESTONE", "response": "진행 중인 챌린지가 없어."}
+
+        # Search for matching milestone
+        for ch in challenges:
+            detail = await challenge_service.get_challenge(ch["id"])
+            milestones = detail.get("milestones") or []
+            for i, ms in enumerate(milestones):
+                if ms.get("status") == "completed":
+                    continue
+                # Fuzzy match: check if milestone_name is contained in title or vice versa
+                if (milestone_name and (
+                    milestone_name in ms["title"] or
+                    ms["title"] in milestone_name or
+                    _fuzzy_match(milestone_name, ms["title"])
+                )):
+                    await challenge_service.update_milestone(ch["id"], i, "completed")
+                    return {
+                        "command": "COMPLETE_MILESTONE",
+                        "response": f"'{ms['title']}' 마일스톤을 완료 처리했어!",
+                    }
+
+            # If no name specified, complete the next pending milestone
+            if not milestone_name:
+                for i, ms in enumerate(milestones):
+                    if ms.get("status") != "completed":
+                        await challenge_service.update_milestone(ch["id"], i, "completed")
+                        return {
+                            "command": "COMPLETE_MILESTONE",
+                            "response": f"'{ms['title']}' 마일스톤을 완료 처리했어!",
+                        }
+
+        return {"command": "COMPLETE_MILESTONE", "response": "일치하는 마일스톤을 찾지 못했어."}
+
+    return {"command": command, "response": "알 수 없는 챌린지 명령이야."}
+
+
+def _fuzzy_match(a: str, b: str) -> bool:
+    """간단한 유사도 매칭 (공통 글자 비율)."""
+    a_set = set(a.replace(" ", ""))
+    b_set = set(b.replace(" ", ""))
+    if not a_set or not b_set:
+        return False
+    overlap = len(a_set & b_set)
+    return overlap / min(len(a_set), len(b_set)) > 0.5
 
 
 async def _get_nearby_schedules(start_at: str) -> list[dict]:
