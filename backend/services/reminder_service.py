@@ -184,11 +184,29 @@ class ReminderService:
         # Clean old notification keys (keep only today's)
         self._notified_challenges = {k for k in self._notified_challenges if k.endswith(today)}
 
+    async def _tts_cleanup_loop(self):
+        """Delete TTS cache files older than 7 days. Runs once per hour."""
+        while True:
+            try:
+                tts_dir = Path(__file__).resolve().parent.parent / "tts_cache"
+                if tts_dir.exists():
+                    import time
+                    cutoff = time.time() - 7 * 86400
+                    for f in tts_dir.iterdir():
+                        if f.is_file() and f.stat().st_mtime < cutoff:
+                            f.unlink()
+                            logger.info(f"[TTS Cleanup] Deleted old cache: {f.name}")
+            except Exception as e:
+                logger.warning(f"[TTS Cleanup] Error: {e}")
+            await asyncio.sleep(3600)
+
     def start(self):
         if self._task is None:
             self._task = asyncio.create_task(self._check_loop())
         if self._challenge_task is None:
             self._challenge_task = asyncio.create_task(self._challenge_check_loop())
+        if not hasattr(self, '_cleanup_task') or self._cleanup_task is None:
+            self._cleanup_task = asyncio.create_task(self._tts_cleanup_loop())
 
     def stop(self):
         if self._task:
@@ -197,6 +215,9 @@ class ReminderService:
         if self._challenge_task:
             self._challenge_task.cancel()
             self._challenge_task = None
+        if hasattr(self, '_cleanup_task') and self._cleanup_task:
+            self._cleanup_task.cancel()
+            self._cleanup_task = None
 
 
 reminder_service = ReminderService()
