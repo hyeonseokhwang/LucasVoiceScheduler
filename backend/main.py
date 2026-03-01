@@ -24,6 +24,9 @@ from routers.voice import router as voice_router
 from routers.challenge import router as challenge_router
 from routers.briefing import router as briefing_router
 from routers.stats import router as stats_router
+from routers.natural import router as natural_router
+from routers.template import router as template_router
+from routers.dashboard import router as dashboard_router
 
 
 async def _prewarm_ollama():
@@ -91,6 +94,9 @@ app.include_router(voice_router)
 app.include_router(challenge_router)
 app.include_router(briefing_router)
 app.include_router(stats_router)
+app.include_router(natural_router)
+app.include_router(template_router)
+app.include_router(dashboard_router)
 
 
 @app.get("/api/health")
