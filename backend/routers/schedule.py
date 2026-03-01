@@ -97,6 +97,22 @@ async def complete_schedule(schedule_id: int):
     return result
 
 
+class RecurrenceException(BaseModel):
+    date: str
+    action: str = "skip"
+
+
+@router.post("/{schedule_id}/exception")
+async def add_exception(schedule_id: int, body: RecurrenceException):
+    """Add an exception to a recurring schedule (skip a specific date)."""
+    result = await schedule_service.add_recurrence_exception(
+        schedule_id, body.date, body.action
+    )
+    if "error" in result:
+        raise HTTPException(400, result["error"])
+    return result
+
+
 @router.websocket("/ws")
 async def websocket_endpoint(ws: WebSocket):
     await reminder_service.connect(ws)

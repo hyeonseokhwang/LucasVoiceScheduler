@@ -24,7 +24,16 @@ def _parse_dt(s: str) -> datetime:
 
 
 def _expand_recurrence(schedule: dict, range_start: datetime, range_end: datetime) -> list[dict]:
-    """Expand a recurring schedule into individual occurrences within a date range."""
+    """Expand a recurring schedule into individual occurrences within a date range.
+
+    Supports:
+    - freq: daily/weekly/monthly/yearly
+    - interval: repeat every N periods
+    - days: weekday filter (0=MO..6=SU) for weekly
+    - until: end date for recurrence
+    - exclude_dates: list of "YYYY-MM-DD" dates to skip
+    - count: max number of occurrences
+    """
     rec = json.loads(schedule["recurrence"])
     freq = FREQ_MAP.get(rec.get("freq", "").lower())
     if freq is None:
@@ -33,26 +42,36 @@ def _expand_recurrence(schedule: dict, range_start: datetime, range_end: datetim
     interval = rec.get("interval", 1)
     until = _parse_dt(rec["until"]) if rec.get("until") else range_end
     byweekday = rec.get("days")  # 0=MO ... 6=SU
+    count = rec.get("count")
+    exclude_dates = set(rec.get("exclude_dates", []))
 
     base_start = _parse_dt(schedule["start_at"])
     duration = None
     if schedule.get("end_at"):
         duration = _parse_dt(schedule["end_at"]) - base_start
 
-    rule = rrule(
-        freq=freq,
-        interval=interval,
-        dtstart=base_start,
-        until=min(until, range_end),
-        byweekday=byweekday,
-    )
+    rule_kwargs = {
+        "freq": freq,
+        "interval": interval,
+        "dtstart": base_start,
+        "until": min(until, range_end),
+        "byweekday": byweekday,
+    }
+    if count:
+        rule_kwargs["count"] = count
+        rule_kwargs.pop("until", None)
+
+    rule = rrule(**rule_kwargs)
 
     occurrences = []
     for dt in rule:
-        if dt < range_start - (duration or timedelta(0)):
-            continue
         if dt > range_end:
             break
+        if dt < range_start - (duration or timedelta(0)):
+            continue
+        # Skip excluded dates
+        if dt.strftime("%Y-%m-%d") in exclude_dates:
+            continue
         occ = dict(schedule)
         occ["start_at"] = dt.strftime("%Y-%m-%dT%H:%M:%S")
         if duration:
@@ -62,6 +81,33 @@ def _expand_recurrence(schedule: dict, range_start: datetime, range_end: datetim
         occurrences.append(occ)
 
     return occurrences
+
+
+async def add_recurrence_exception(schedule_id: int, date: str, action: str = "skip") -> dict:
+    """Add an exception to a recurring schedule.
+
+    action:
+      - 'skip': exclude this date from the recurrence
+      - 'modify': create a one-off child schedule for this date (use create_schedule with parent_id)
+    """
+    schedule = await get_schedule(schedule_id)
+    if not schedule or not schedule.get("recurrence"):
+        return {"error": "Schedule not found or not recurring"}
+
+    rec = json.loads(schedule["recurrence"])
+
+    if action == "skip":
+        excludes = rec.get("exclude_dates", [])
+        if date not in excludes:
+            excludes.append(date)
+        rec["exclude_dates"] = excludes
+        await execute(
+            "UPDATE schedules SET recurrence = ? WHERE id = ?",
+            (json.dumps(rec), schedule_id),
+        )
+        return {"status": "ok", "action": "skip", "date": date, "exclude_dates": rec["exclude_dates"]}
+
+    return {"error": f"Unknown action: {action}"}
 
 
 async def list_schedules(
