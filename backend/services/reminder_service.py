@@ -11,6 +11,7 @@ from services.schedule_service import get_due_reminders
 from services.notification import (
     NotificationManager, WebSocketChannel, LogChannel, notification_manager,
 )
+from services.telegram_channel import TelegramChannel
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -31,6 +32,7 @@ class ReminderService:
         self._ws_channel = WebSocketChannel()
         notification_manager.register(self._ws_channel)
         notification_manager.register(LogChannel())
+        notification_manager.register(TelegramChannel())
 
     async def connect(self, ws: WebSocket):
         """WebSocket connection (delegates to WebSocketChannel)."""
