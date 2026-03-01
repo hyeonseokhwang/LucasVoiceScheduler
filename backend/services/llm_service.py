@@ -15,9 +15,22 @@ import httpx
 logger = logging.getLogger(__name__)
 
 OLLAMA_URL = "http://localhost:11434/api/generate"
-MODEL = "qwen2.5-coder:7b"
-TIMEOUT = 15.0  # seconds
-KEEP_ALIVE = "30m"
+MODEL = "qwen2.5:14b"
+TIMEOUT = 30.0  # seconds (여유 있게)
+KEEP_ALIVE = "60m"  # 모델 VRAM 상주 시간 연장
+
+# 커넥션 풀링 — 매 요청마다 TCP 핸드셰이크 방지
+_http_client: httpx.AsyncClient | None = None
+
+
+def _get_client() -> httpx.AsyncClient:
+    global _http_client
+    if _http_client is None or _http_client.is_closed:
+        _http_client = httpx.AsyncClient(
+            timeout=TIMEOUT,
+            limits=httpx.Limits(max_keepalive_connections=5, max_connections=10),
+        )
+    return _http_client
 
 
 async def check_ollama_available() -> bool:
@@ -61,31 +74,30 @@ async def parse_with_llm(
     )
 
     try:
-        async with httpx.AsyncClient() as client:
-            resp = await client.post(
-                OLLAMA_URL,
-                json={
-                    "model": MODEL,
-                    "prompt": prompt,
-                    "stream": False,
-                    "keep_alive": KEEP_ALIVE,
-                    "options": {
-                        "temperature": 0.1,
-                        "num_predict": 256,
-                    },
+        client = _get_client()
+        resp = await client.post(
+            OLLAMA_URL,
+            json={
+                "model": MODEL,
+                "prompt": prompt,
+                "stream": False,
+                "keep_alive": KEEP_ALIVE,
+                "options": {
+                    "temperature": 0.1,
+                    "num_predict": 256,
                 },
-                timeout=TIMEOUT,
-            )
-            resp.raise_for_status()
-            data = resp.json()
-            response_text = data.get("response", "")
+            },
+        )
+        resp.raise_for_status()
+        data = resp.json()
+        response_text = data.get("response", "")
 
-            parsed = _extract_json(response_text)
-            if parsed:
-                return parsed
+        parsed = _extract_json(response_text)
+        if parsed:
+            return parsed
 
-            logger.warning(f"LLM returned non-JSON response: {response_text[:200]}")
-            return None
+        logger.warning(f"LLM returned non-JSON response: {response_text[:200]}")
+        return None
 
     except httpx.TimeoutException:
         logger.warning("Ollama request timed out")
@@ -144,23 +156,22 @@ async def generate_response(
             "자연스러운 한국어로 짧게(1-2문장) 응답해주세요. 확인을 구하세요."
         )
 
-        async with httpx.AsyncClient() as client:
-            resp = await client.post(
-                OLLAMA_URL,
-                json={
-                    "model": MODEL,
-                    "prompt": prompt,
-                    "stream": False,
-                    "keep_alive": KEEP_ALIVE,
-                    "options": {"temperature": 0.7, "num_predict": 100},
-                },
-                timeout=TIMEOUT,
-            )
-            resp.raise_for_status()
-            data = resp.json()
-            response = data.get("response", "").strip()
-            if response:
-                return response
+        client = _get_client()
+        resp = await client.post(
+            OLLAMA_URL,
+            json={
+                "model": MODEL,
+                "prompt": prompt,
+                "stream": False,
+                "keep_alive": KEEP_ALIVE,
+                "options": {"temperature": 0.7, "num_predict": 100},
+            },
+        )
+        resp.raise_for_status()
+        data = resp.json()
+        response = data.get("response", "").strip()
+        if response:
+            return response
     except Exception:
         pass
 

@@ -2,7 +2,23 @@ import { useState, useEffect, useCallback, useRef } from 'react'
 import type { Schedule, ScheduleFormData } from '../types'
 import { CATEGORIES } from '../types'
 import { api } from '../lib/api'
-import { useSpeechRecognition, speak, stopSpeaking } from '../hooks/useSpeechRecognition'
+import { useSpeechRecognition, speak, stopSpeaking, isSentenceEnd, enqueueTTS, onTTSQueueDone, resetTTSQueue } from '../hooks/useSpeechRecognition'
+
+/** 화면 표시 + TTS 전송 전에 ACTION 태그/JSON/에러코드 제거 */
+function cleanLLMText(text: string): string {
+  return text
+    // [ACTION:XXX] + 선택적 JSON
+    .replace(/\[ACTION:\w+\]\s*(\{[^{}]*(?:\{[^{}]*\}[^{}]*)*\})?/g, '')
+    // 잔여 대괄호 태그 [SOMETHING:SOMETHING]
+    .replace(/\[[A-Z_]+(?::[A-Z_]+)*\]/g, '')
+    // JSON 객체
+    .replace(/\{[^{}]*"[^"]*"\s*:[^{}]*\}/g, '')
+    // 에러 문자열
+    .replace(/\b(UNDEFINED|UNPARSED\s*TEXT|undefined|null|NaN)\b/gi, '')
+    // 연속 공백 정리
+    .replace(/\s+/g, ' ')
+    .trim()
+}
 
 interface Props {
   onScheduleCreated: () => void
@@ -84,7 +100,7 @@ export function VoiceAssistant({ onScheduleCreated, addToast }: Props) {
         const data = await fallback.json()
         const assistantMsg: ChatMessage = {
           role: 'assistant',
-          content: data.response || '잘 못 알아들었어, 다시 말해줘.',
+          content: cleanLLMText(data.response) || '잘 못 알아들었어, 다시 말해줘.',
           timestamp: new Date(),
           scheduleData: data.schedule_data,
           action: data.action,
@@ -107,7 +123,7 @@ export function VoiceAssistant({ onScheduleCreated, addToast }: Props) {
         return
       }
 
-      // 스트리밍 처리: 토큰 하나씩 표시
+      // 스트리밍 처리: 토큰 하나씩 표시 + 문장 단위 실시간 TTS
       const placeholderMsg: ChatMessage = {
         role: 'assistant',
         content: '',
@@ -116,9 +132,14 @@ export function VoiceAssistant({ onScheduleCreated, addToast }: Props) {
       setMessages((prev) => [...prev, placeholderMsg])
       setMode('speaking')
 
+      // 문장 단위 TTS 큐 초기화
+      resetTTSQueue()
+
       const reader = resp.body.getReader()
       const decoder = new TextDecoder()
       let fullText = ''
+      let sentenceBuffer = '' // 현재 문장 누적 버퍼
+      let lastFlushTime = Date.now()
 
       while (true) {
         const { done, value } = await reader.read()
@@ -132,11 +153,27 @@ export function VoiceAssistant({ onScheduleCreated, addToast }: Props) {
             const payload = line.slice(6)
             if (payload === '[DONE]') continue
             fullText += payload
+            sentenceBuffer += payload
+
+            const now = Date.now()
+            // 문장 끝 감지 또는 3초 이상 버퍼에 쌓이면 강제 플러시
+            const shouldFlush = isSentenceEnd(sentenceBuffer) ||
+              (sentenceBuffer.trim().length > 15 && now - lastFlushTime > 3000)
+
+            if (shouldFlush && sentenceBuffer.trim()) {
+              const cleaned = cleanLLMText(sentenceBuffer)
+              if (cleaned) enqueueTTS(cleaned)
+              sentenceBuffer = ''
+              lastFlushTime = now
+            }
+
+            // 화면에는 ACTION 태그 제거된 텍스트만 표시
+            const displayText = cleanLLMText(fullText)
             setMessages((prev) => {
               const updated = [...prev]
               const last = updated[updated.length - 1]
               if (last && last.role === 'assistant') {
-                updated[updated.length - 1] = { ...last, content: fullText }
+                updated[updated.length - 1] = { ...last, content: displayText }
               }
               return updated
             })
@@ -144,21 +181,48 @@ export function VoiceAssistant({ onScheduleCreated, addToast }: Props) {
         }
       }
 
-      if (!fullText.trim()) {
-        fullText = '잘 못 알아들었어, 다시 말해줘.'
+      // 스트리밍 종료: 남은 버퍼도 TTS로 (클리닝 후)
+      if (sentenceBuffer.trim()) {
+        const cleaned = cleanLLMText(sentenceBuffer)
+        if (cleaned) enqueueTTS(cleaned)
       }
 
-      // TTS로 응답 읽어주기
-      speak(fullText, () => {
-        if (conversationMode) {
-          setMode('listening')
-          reset()
-          lastTranscriptRef.current = ''
-          start()
-        } else {
-          setMode('idle')
+      // 최종 표시 텍스트도 클리닝
+      const finalDisplay = cleanLLMText(fullText)
+      setMessages((prev) => {
+        const updated = [...prev]
+        const last = updated[updated.length - 1]
+        if (last && last.role === 'assistant') {
+          updated[updated.length - 1] = { ...last, content: finalDisplay || fullText }
         }
+        return updated
       })
+
+      if (!cleanLLMText(fullText).trim()) {
+        fullText = '잘 못 알아들었어, 다시 말해줘.'
+        speak(fullText, () => {
+          if (conversationMode) {
+            setMode('listening')
+            reset()
+            lastTranscriptRef.current = ''
+            start()
+          } else {
+            setMode('idle')
+          }
+        })
+      } else {
+        // 모든 TTS 큐 재생 완료 후 콜백
+        onTTSQueueDone(() => {
+          if (conversationMode) {
+            setMode('listening')
+            reset()
+            lastTranscriptRef.current = ''
+            start()
+          } else {
+            setMode('idle')
+          }
+        })
+      }
     } catch {
       const errMsg: ChatMessage = {
         role: 'assistant',

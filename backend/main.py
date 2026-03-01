@@ -15,6 +15,20 @@ from routers.schedule import router as schedule_router
 from routers.voice import router as voice_router
 
 
+async def _prewarm_ollama():
+    """서버 시작 시 Ollama 모델을 VRAM에 미리 올림 (콜드 스타트 방지)."""
+    import httpx
+    try:
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            await client.post(
+                "http://localhost:11434/api/generate",
+                json={"model": "qwen2.5:14b", "prompt": "hi", "stream": False,
+                      "keep_alive": "60m", "options": {"num_predict": 1}},
+            )
+    except Exception:
+        pass
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     await init_db()
@@ -25,6 +39,9 @@ async def lifespan(app: FastAPI):
         preload_model()
     except Exception:
         pass
+    # Ollama 모델 프리워밍 (VRAM 미리 로딩)
+    import asyncio
+    asyncio.create_task(_prewarm_ollama())
     yield
     reminder_service.stop()
 

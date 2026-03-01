@@ -504,6 +504,10 @@ export function speak(text: string, onEnd?: () => void): void {
   }
 
   // Edge TTS API 호출 → MP3 스트리밍 재생
+  _fetchAndPlayTTS(text, onEnd)
+}
+
+function _fetchAndPlayTTS(text: string, onEnd?: () => void): void {
   fetch('/api/voice/tts', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -531,17 +535,19 @@ export function speak(text: string, onEnd?: () => void): void {
         onEnd?.()
       }
       audio.play().catch(() => {
-        // 자동 재생 차단 시 폴백: 브라우저 내장 TTS
         _fallbackSpeak(text, onEnd)
       })
     })
     .catch(() => {
-      // Edge TTS 실패 시 브라우저 내장 TTS 폴백
       _fallbackSpeak(text, onEnd)
     })
 }
 
 export function stopSpeaking(): void {
+  // 큐 TTS 중지
+  _ttsQueue.length = 0
+  _isQueuePlaying = false
+
   if (currentAudio) {
     currentAudio.pause()
     currentAudio.currentTime = 0
@@ -551,7 +557,6 @@ export function stopSpeaking(): void {
     URL.revokeObjectURL(currentObjectUrl)
     currentObjectUrl = null
   }
-  // 폴백 TTS도 중지
   if ('speechSynthesis' in window) {
     window.speechSynthesis.cancel()
   }
@@ -569,4 +574,144 @@ function _fallbackSpeak(text: string, onEnd?: () => void): void {
   utterance.rate = 1.4
   if (onEnd) utterance.onend = () => onEnd()
   window.speechSynthesis.speak(utterance)
+}
+
+
+// ─── Queued TTS (문장 단위 실시간 TTS) ───
+// SSE 스트리밍 중 문장이 완성될 때마다 즉시 TTS 요청을 보내고,
+// 오디오를 큐에 넣어 순서대로 재생한다.
+
+interface TTSQueueItem {
+  text: string
+  blob?: Blob
+  status: 'fetching' | 'ready' | 'playing' | 'done'
+}
+
+const _ttsQueue: TTSQueueItem[] = []
+let _isQueuePlaying = false
+let _queueOnAllDone: (() => void) | null = null
+let _queueFinished = false
+
+/** 한국어 문장 끝 감지 정규식 */
+const SENTENCE_END_RE = /[.?!。？！]\s*$|[요야해거줘까지어네죠래욧걸럼데다셔은함임것가봐볼텐]\s*$/
+
+/**
+ * 스트리밍 중 호출: 문장이 완성되면 true 반환.
+ * 최소 5자 이상이어야 문장으로 인정 (너무 짧은 조각 방지).
+ */
+export function isSentenceEnd(text: string): boolean {
+  const trimmed = text.trim()
+  if (trimmed.length < 5) return false
+  return SENTENCE_END_RE.test(trimmed)
+}
+
+/**
+ * TTS 큐에 문장을 추가하고 즉시 백그라운드에서 TTS fetch 시작.
+ * 이전 문장 재생 중에도 다음 문장의 TTS를 미리 가져온다.
+ */
+export function enqueueTTS(sentence: string): void {
+  const trimmed = sentence.trim()
+  if (!trimmed) return
+
+  const item: TTSQueueItem = { text: trimmed, status: 'fetching' }
+  _ttsQueue.push(item)
+
+  // 백그라운드에서 TTS fetch
+  fetch('/api/voice/tts', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ text: trimmed }),
+  })
+    .then((res) => {
+      if (!res.ok) throw new Error('TTS failed')
+      return res.blob()
+    })
+    .then((blob) => {
+      item.blob = blob
+      item.status = 'ready'
+      // 재생 중이 아니면 큐 재생 시작
+      if (!_isQueuePlaying) _playNextInQueue()
+    })
+    .catch(() => {
+      // 실패한 문장은 건너뜀
+      item.status = 'done'
+      if (!_isQueuePlaying) _playNextInQueue()
+    })
+}
+
+/**
+ * 큐 재생 완료 시 콜백 등록.
+ * 스트리밍이 끝난 뒤 호출하여, 모든 TTS가 재생 완료되면 콜백 실행.
+ */
+export function onTTSQueueDone(callback: () => void): void {
+  _queueFinished = true
+  _queueOnAllDone = callback
+  // 이미 큐가 비어있으면 즉시 실행
+  if (_ttsQueue.every((i) => i.status === 'done')) {
+    _finishQueue()
+  }
+}
+
+/** 큐 초기화 (새 스트리밍 시작 전 호출) */
+export function resetTTSQueue(): void {
+  stopSpeaking()
+  _ttsQueue.length = 0
+  _isQueuePlaying = false
+  _queueOnAllDone = null
+  _queueFinished = false
+}
+
+function _playNextInQueue(): void {
+  // 순서 보장: 첫 번째 미완료 아이템이 ready일 때만 재생
+  const next = _ttsQueue.find((i) => i.status !== 'done')
+  if (!next || next.status === 'fetching') {
+    _isQueuePlaying = false
+    // 스트리밍 종료 + 모든 아이템 완료 → 콜백
+    if (_queueFinished && _ttsQueue.every((i) => i.status === 'done')) {
+      _finishQueue()
+    }
+    return
+  }
+  if (next.status !== 'ready') {
+    _isQueuePlaying = false
+    return
+  }
+
+  _isQueuePlaying = true
+  next.status = 'playing'
+
+  if (currentObjectUrl) URL.revokeObjectURL(currentObjectUrl)
+  currentObjectUrl = URL.createObjectURL(next.blob!)
+  const audio = new Audio(currentObjectUrl)
+  currentAudio = audio
+
+  audio.onended = () => {
+    next.status = 'done'
+    currentAudio = null
+    if (currentObjectUrl) {
+      URL.revokeObjectURL(currentObjectUrl)
+      currentObjectUrl = null
+    }
+    _isQueuePlaying = false
+    _playNextInQueue()
+  }
+  audio.onerror = () => {
+    next.status = 'done'
+    currentAudio = null
+    _isQueuePlaying = false
+    _playNextInQueue()
+  }
+  audio.play().catch(() => {
+    next.status = 'done'
+    _isQueuePlaying = false
+    _playNextInQueue()
+  })
+}
+
+function _finishQueue(): void {
+  const cb = _queueOnAllDone
+  _queueOnAllDone = null
+  _queueFinished = false
+  _ttsQueue.length = 0
+  cb?.()
 }

@@ -247,12 +247,47 @@ class TTSRequest(BaseModel):
     rate: str = "+10%"
 
 
+def _sanitize_for_tts(text: str) -> str:
+    """TTS 전에 에러코드, 디버그 텍스트, 액션 태그 등을 제거."""
+    import re
+
+    # 1. [ACTION:XXX] + 선택적 JSON (중첩 포함) 패턴 제거
+    #    예: [ACTION:CREATE]{"title":"회의","start_at":"..."}
+    #    예: [ACTION:NONE], [ACTION:ASK]
+    text = re.sub(r'\[ACTION:\w+\]\s*(\{[^{}]*(?:\{[^{}]*\}[^{}]*)*\})?', '', text)
+
+    # 2. 코드 블록 제거
+    text = re.sub(r'```[\s\S]*?```', '', text)
+
+    # 3. JSON 객체 제거 ({"key": "value"} 형태)
+    text = re.sub(r'\{[^{}]*"[^"]*"\s*:[^{}]*\}', '', text)
+
+    # 4. 에러/디버그 문자열 제거
+    error_patterns = [
+        r'\bUNDEFINED\b', r'\bUNPARSED\s*TEXT\b', r'\bundefined\b',
+        r'\bnull\b', r'\bNaN\b', r'\bERROR\b', r'\bError\b',
+        r'directive within the instructions provided',
+        r'as an AI language model',
+        r'I cannot|I\'m sorry.*I can\'t',
+    ]
+    for pat in error_patterns:
+        text = re.sub(pat, '', text, flags=re.IGNORECASE)
+
+    # 5. 잔여 대괄호 태그 제거 — [대문자_:대문자_] 패턴 전체
+    text = re.sub(r'\[[A-Z_]+(?::[A-Z_]+)*\]', '', text)
+
+    # 6. 연속 공백 정리
+    text = re.sub(r'\s+', ' ', text).strip()
+
+    return text
+
+
 @router.post("/tts")
 async def voice_tts(body: TTSRequest):
     """Edge TTS — 텍스트를 자연스러운 Neural 음성(MP3)으로 변환."""
     import edge_tts
 
-    text = body.text.strip()
+    text = _sanitize_for_tts(body.text.strip())
     if not text:
         return {"error": "텍스트가 비어있습니다"}
 
