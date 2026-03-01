@@ -146,8 +146,17 @@ export function ChallengePage({ addToast }: Props) {
           </div>
         </div>
         <div className="flex justify-between text-sm">
-          <span className="text-slate-400">{ch.current_amount.toLocaleString()}원 달성</span>
-          <span className="text-slate-500">목표 {ch.target_amount.toLocaleString()}원</span>
+          {ch.target_amount > 0 ? (
+            <>
+              <span className="text-slate-400">{ch.current_amount.toLocaleString()}원 달성</span>
+              <span className="text-slate-500">목표 {ch.target_amount.toLocaleString()}원</span>
+            </>
+          ) : (
+            <>
+              <span className="text-slate-400">마일스톤 {progress?.milestones_done ?? 0}/{progress?.milestones_total ?? 0} 완료</span>
+              <span className="text-slate-500">{progress?.remaining ?? 0}개 남음</span>
+            </>
+          )}
         </div>
       </div>
 

@@ -112,9 +112,19 @@ export function ChallengeCard({ addToast }: Props) {
                 />
               </div>
               <div className="flex justify-between mt-1.5 text-xs text-slate-500">
-                <span>{ch.current_amount.toLocaleString()}원</span>
-                <span>{pct}%</span>
-                <span>{ch.target_amount.toLocaleString()}원</span>
+                {ch.target_amount > 0 ? (
+                  <>
+                    <span>{ch.current_amount.toLocaleString()}원</span>
+                    <span>{pct}%</span>
+                    <span>{ch.target_amount.toLocaleString()}원</span>
+                  </>
+                ) : (
+                  <>
+                    <span>마일스톤 {ch.progress?.milestones_done ?? 0}/{ch.progress?.milestones_total ?? 0}</span>
+                    <span>{pct}%</span>
+                    <span>{ch.progress?.remaining ?? 0}개 남음</span>
+                  </>
+                )}
               </div>
             </button>
 
