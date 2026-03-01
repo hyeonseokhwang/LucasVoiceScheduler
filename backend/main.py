@@ -14,6 +14,7 @@ from services.reminder_service import reminder_service
 from routers.schedule import router as schedule_router
 from routers.voice import router as voice_router
 from routers.challenge import router as challenge_router
+from routers.briefing import router as briefing_router
 
 
 async def _prewarm_ollama():
@@ -34,6 +35,9 @@ async def _prewarm_ollama():
 async def lifespan(app: FastAPI):
     await init_db()
     reminder_service.start()
+    # Daily briefing auto-generation at KST 08:00
+    from services.briefing_service import briefing_scheduler
+    briefing_scheduler.start()
     # Pre-load Whisper model in background thread (avoids first-request delay)
     try:
         from services.whisper_service import preload_model
@@ -45,6 +49,7 @@ async def lifespan(app: FastAPI):
     asyncio.create_task(_prewarm_ollama())
     yield
     reminder_service.stop()
+    briefing_scheduler.stop()
 
 
 app = FastAPI(title="Lucas Scheduler", version="1.0.0", lifespan=lifespan)
@@ -60,6 +65,7 @@ app.add_middleware(
 app.include_router(schedule_router)
 app.include_router(voice_router)
 app.include_router(challenge_router)
+app.include_router(briefing_router)
 
 
 @app.get("/api/health")

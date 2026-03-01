@@ -41,12 +41,24 @@ async def get_challenge(challenge_id: int):
 
 
 def _calc_progress(challenge: dict) -> dict:
-    target = challenge["target_amount"] or 1
+    target = challenge["target_amount"]
     current = challenge["current_amount"]
     deadline = challenge["deadline"]
 
-    # Percentage
-    pct = min(round(current / target * 100, 1), 100)
+    # Milestone progress
+    milestones = challenge.get("milestones") or []
+    if isinstance(milestones, str):
+        milestones = json.loads(milestones)
+    total_ms = len(milestones)
+    done_ms = sum(1 for m in milestones if m.get("status") == "completed")
+
+    # Percentage: revenue-based if target > 0, otherwise milestone-based
+    if target > 0:
+        pct = min(round(current / target * 100, 1), 100)
+    elif total_ms > 0:
+        pct = round(done_ms / total_ms * 100, 1)
+    else:
+        pct = 0
 
     # D-day
     try:
@@ -56,19 +68,12 @@ def _calc_progress(challenge: dict) -> dict:
     except ValueError:
         d_day = None
 
-    # Milestone progress
-    milestones = challenge.get("milestones") or []
-    if isinstance(milestones, str):
-        milestones = json.loads(milestones)
-    total_ms = len(milestones)
-    done_ms = sum(1 for m in milestones if m.get("status") == "completed")
-
     return {
         "percentage": pct,
         "d_day": d_day,
         "milestones_total": total_ms,
         "milestones_done": done_ms,
-        "remaining": max(target - current, 0),
+        "remaining": max(target - current, 0) if target > 0 else total_ms - done_ms,
     }
 
 
@@ -178,8 +183,23 @@ async def update_milestone(challenge_id: int, milestone_index: int, status: str)
         return None
 
     milestones[milestone_index]["status"] = status
+    if status == "completed":
+        milestones[milestone_index]["completed_at"] = datetime.now().strftime(
+            "%Y-%m-%dT%H:%M:%S"
+        )
+
     await execute(
         "UPDATE challenges SET milestones = ? WHERE id = ?",
         (json.dumps(milestones, ensure_ascii=False), challenge_id),
     )
+
+    # Auto-complete challenge if all milestones done and no revenue target
+    total_ms = len(milestones)
+    done_ms = sum(1 for m in milestones if m.get("status") == "completed")
+    if done_ms == total_ms and total_ms > 0 and challenge["target_amount"] == 0:
+        await execute(
+            "UPDATE challenges SET status = 'completed' WHERE id = ? AND status = 'active'",
+            (challenge_id,),
+        )
+
     return await get_challenge(challenge_id)

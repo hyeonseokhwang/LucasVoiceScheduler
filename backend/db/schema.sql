@@ -49,3 +49,14 @@ CREATE TABLE IF NOT EXISTS earnings (
 
 CREATE INDEX IF NOT EXISTS idx_earnings_challenge ON earnings(challenge_id);
 CREATE INDEX IF NOT EXISTS idx_earnings_date ON earnings(date);
+
+-- Daily Briefings (일일 브리핑)
+CREATE TABLE IF NOT EXISTS briefings (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    date        TEXT NOT NULL UNIQUE,
+    content     TEXT NOT NULL,
+    schedule_count INTEGER DEFAULT 0,
+    created_at  TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_briefings_date ON briefings(date);
