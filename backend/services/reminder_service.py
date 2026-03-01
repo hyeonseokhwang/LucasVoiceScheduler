@@ -12,6 +12,7 @@ from services.notification import (
     NotificationManager, WebSocketChannel, LogChannel, notification_manager,
 )
 from services.telegram_channel import TelegramChannel
+from services.webhook_service import webhook_service
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -71,6 +72,7 @@ class ReminderService:
                         "message": message,
                     })
                     logger.info(f"[Reminder] {message}")
+                    await webhook_service.dispatch("reminder", {"schedule": r, "message": message})
 
                     # Generate TTS audio
                     if TTS_ENABLED:

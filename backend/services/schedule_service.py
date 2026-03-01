@@ -5,6 +5,7 @@ from dateutil.rrule import rrule, DAILY, WEEKLY, MONTHLY, YEARLY
 from dateutil.relativedelta import relativedelta
 
 from services.db_service import fetch_all, fetch_one, execute, execute_returning
+from services.webhook_service import webhook_service
 
 FREQ_MAP = {
     "daily": DAILY,
@@ -215,7 +216,9 @@ async def create_schedule(data: dict) -> dict:
             data.get("parent_id"),
         ),
     )
-    return await fetch_one("SELECT * FROM schedules WHERE id = ?", (row_id,))
+    result = await fetch_one("SELECT * FROM schedules WHERE id = ?", (row_id,))
+    await webhook_service.dispatch("schedule.created", result)
+    return result
 
 
 async def update_schedule(schedule_id: int, data: dict) -> Optional[dict]:
@@ -257,7 +260,10 @@ async def delete_schedule(schedule_id: int) -> bool:
 
 async def complete_schedule(schedule_id: int) -> Optional[dict]:
     await execute("UPDATE schedules SET status = 'completed' WHERE id = ?", (schedule_id,))
-    return await fetch_one("SELECT * FROM schedules WHERE id = ?", (schedule_id,))
+    result = await fetch_one("SELECT * FROM schedules WHERE id = ?", (schedule_id,))
+    if result:
+        await webhook_service.dispatch("schedule.completed", result)
+    return result
 
 
 async def get_upcoming(hours: int = 24):
