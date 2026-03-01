@@ -9,10 +9,14 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from slowapi import Limiter, _rate_limit_exceeded_handler
+from slowapi.util import get_remote_address
+from slowapi.errors import RateLimitExceeded
 
 from config import HOST, PORT
 
 SCHEDULER_API_KEY = os.environ.get("SCHEDULER_API_KEY")
+limiter = Limiter(key_func=get_remote_address, default_limits=["60/minute"])
 from services.db_service import init_db
 from services.reminder_service import reminder_service
 from routers.schedule import router as schedule_router
@@ -57,6 +61,8 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="Lucas Scheduler", version="1.0.0", lifespan=lifespan)
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
 app.add_middleware(
     CORSMiddleware,
