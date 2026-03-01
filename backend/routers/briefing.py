@@ -1,15 +1,23 @@
 """일일 브리핑 API 라우터."""
 
+import asyncio
+import logging
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 
-from fastapi import APIRouter, Query
+from fastapi import APIRouter, HTTPException, Query
+from fastapi.responses import StreamingResponse
 
 from services.briefing_service import generate_briefing
 from services.db_service import fetch_one, fetch_all
 
+logger = logging.getLogger(__name__)
+
 router = APIRouter(prefix="/api/briefing", tags=["briefing"])
 
 KST = timezone(timedelta(hours=9))
+TTS_VOICE = "ko-KR-SunHiNeural"
+TTS_DIR = Path(__file__).resolve().parent.parent / "tts_cache"
 
 
 @router.get("/today")
@@ -18,6 +26,45 @@ async def get_today_briefing():
     today = datetime.now(KST).strftime("%Y-%m-%d")
     result = await generate_briefing(today)
     return result
+
+
+@router.get("/today/voice")
+async def get_today_briefing_voice():
+    """오늘의 브리핑을 Edge TTS로 변환하여 MP3로 반환."""
+    today = datetime.now(KST).strftime("%Y-%m-%d")
+    briefing = await generate_briefing(today)
+    content = briefing.get("content", "")
+    if not content:
+        raise HTTPException(404, "No briefing content available")
+
+    TTS_DIR.mkdir(exist_ok=True)
+    audio_path = TTS_DIR / f"briefing_{today}.mp3"
+
+    # Generate if not cached
+    if not audio_path.exists():
+        try:
+            proc = await asyncio.create_subprocess_exec(
+                "python", "-m", "edge_tts",
+                "--voice", TTS_VOICE,
+                "--text", content,
+                "--write-media", str(audio_path),
+                stdout=asyncio.subprocess.DEVNULL,
+                stderr=asyncio.subprocess.DEVNULL,
+            )
+            await asyncio.wait_for(proc.wait(), timeout=30)
+            logger.info(f"[TTS] Briefing audio generated: {audio_path} ({audio_path.stat().st_size} bytes)")
+        except Exception as e:
+            logger.warning(f"[TTS] Briefing generation failed: {e}")
+            raise HTTPException(500, f"TTS generation failed: {e}")
+
+    if not audio_path.exists():
+        raise HTTPException(500, "TTS file was not created")
+
+    return StreamingResponse(
+        open(audio_path, "rb"),
+        media_type="audio/mpeg",
+        headers={"Content-Disposition": f"inline; filename=briefing_{today}.mp3"},
+    )
 
 
 @router.get("/{date}")
