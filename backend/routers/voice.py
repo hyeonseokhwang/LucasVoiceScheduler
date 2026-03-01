@@ -327,6 +327,22 @@ async def voice_tts(body: TTSRequest):
     return StreamingResponse(generate(), media_type="audio/mpeg")
 
 
+@router.get("/reminder/{schedule_id}")
+async def get_reminder_audio(schedule_id: int):
+    """Get TTS audio file for a schedule reminder."""
+    from pathlib import Path
+    tts_dir = Path(__file__).resolve().parent.parent / "tts_cache"
+    audio_path = tts_dir / f"reminder_{schedule_id}.mp3"
+    if not audio_path.exists():
+        from fastapi import HTTPException
+        raise HTTPException(404, "Reminder audio not found")
+    return StreamingResponse(
+        open(audio_path, "rb"),
+        media_type="audio/mpeg",
+        headers={"Content-Disposition": f"inline; filename=reminder_{schedule_id}.mp3"},
+    )
+
+
 @router.get("/status")
 async def voice_status():
     """Check voice service status."""

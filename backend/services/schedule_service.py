@@ -144,6 +144,16 @@ async def create_schedule(data: dict) -> dict:
     if recurrence and isinstance(recurrence, dict):
         recurrence = json.dumps(recurrence)
 
+    # Auto-set remind_at to 10 minutes before start if not specified
+    remind_at = data.get("remind_at")
+    if not remind_at and not data.get("all_day"):
+        try:
+            start_dt = _parse_dt(data["start_at"])
+            remind_dt = start_dt - timedelta(minutes=10)
+            remind_at = remind_dt.strftime("%Y-%m-%dT%H:%M:%S")
+        except Exception:
+            pass
+
     row_id = await execute(
         """INSERT INTO schedules (title, description, start_at, end_at, all_day, category, remind_at, recurrence, parent_id)
            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
@@ -154,7 +164,7 @@ async def create_schedule(data: dict) -> dict:
             data.get("end_at"),
             1 if data.get("all_day") else 0,
             data.get("category", "general"),
-            data.get("remind_at"),
+            remind_at,
             recurrence,
             data.get("parent_id"),
         ),
