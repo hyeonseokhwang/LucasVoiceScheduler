@@ -24,6 +24,30 @@ MODEL = "qwen2.5:14b"
 WEATHER_API_KEY = ""  # 비어있으면 하드코딩 사용
 WEATHER_CITY = "Seoul"
 
+# Default briefing config
+DEFAULT_BRIEFING_CONFIG = {
+    "weather": True,
+    "yesterday_completed": True,
+    "today_schedules": True,
+    "challenges": True,
+    "priority_sort": True,
+    "greeting": True,
+}
+
+# In-memory config (persisted across requests but not restarts)
+_briefing_config: dict = dict(DEFAULT_BRIEFING_CONFIG)
+
+
+def get_briefing_config() -> dict:
+    return dict(_briefing_config)
+
+
+def update_briefing_config(updates: dict) -> dict:
+    for key in updates:
+        if key in DEFAULT_BRIEFING_CONFIG:
+            _briefing_config[key] = bool(updates[key])
+    return dict(_briefing_config)
+
 
 async def _get_today_schedules(date_str: str) -> list[dict]:
     """Get all active schedules for a given date, sorted by start time."""
@@ -136,11 +160,12 @@ async def generate_briefing(date_str: str | None = None) -> dict:
     if existing:
         return existing
 
-    # Gather all data
-    schedules = await _get_today_schedules(date_str)
-    yesterday_done = await _get_yesterday_completed(date_str)
-    challenges = await _get_active_challenges()
-    weather = await _fetch_weather()
+    # Gather data based on config
+    cfg = get_briefing_config()
+    schedules = await _get_today_schedules(date_str) if cfg["today_schedules"] else []
+    yesterday_done = await _get_yesterday_completed(date_str) if cfg["yesterday_completed"] else []
+    challenges = await _get_active_challenges() if cfg["challenges"] else []
+    weather = await _fetch_weather() if cfg["weather"] else None
 
     # Build LLM prompt with enriched data
     prompt = _build_llm_prompt(date_str, schedules, yesterday_done, challenges, weather)

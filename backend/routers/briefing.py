@@ -8,7 +8,8 @@ from pathlib import Path
 from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import StreamingResponse
 
-from services.briefing_service import generate_briefing
+from pydantic import BaseModel
+from services.briefing_service import generate_briefing, get_briefing_config, update_briefing_config
 from services.db_service import fetch_one, fetch_all
 
 logger = logging.getLogger(__name__)
@@ -18,6 +19,28 @@ router = APIRouter(prefix="/api/briefing", tags=["briefing"])
 KST = timezone(timedelta(hours=9))
 TTS_VOICE = "ko-KR-SunHiNeural"
 TTS_DIR = Path(__file__).resolve().parent.parent / "tts_cache"
+
+
+class BriefingConfigUpdate(BaseModel):
+    weather: bool | None = None
+    yesterday_completed: bool | None = None
+    today_schedules: bool | None = None
+    challenges: bool | None = None
+    priority_sort: bool | None = None
+    greeting: bool | None = None
+
+
+@router.get("/config")
+async def get_config():
+    """Get current briefing configuration."""
+    return get_briefing_config()
+
+
+@router.put("/config")
+async def set_config(body: BriefingConfigUpdate):
+    """Update briefing configuration (which sections to include)."""
+    updates = {k: v for k, v in body.model_dump().items() if v is not None}
+    return update_briefing_config(updates)
 
 
 @router.get("/today")
